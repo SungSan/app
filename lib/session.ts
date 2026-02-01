@@ -14,12 +14,18 @@ export function useAuthState(): AuthState {
     let mounted = true;
 
     // 1) 초기 세션 로드
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return;
-      const session = data?.session ?? null;
-      if (error || !session?.access_token) setState({ status: "signed_out" });
-      else setState({ status: "signed_in", accessToken: session.access_token });
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data, error }) => {
+        if (!mounted) return;
+        const session = data?.session ?? null;
+        if (error || !session?.access_token) setState({ status: "signed_out" });
+        else setState({ status: "signed_in", accessToken: session.access_token });
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setState({ status: "signed_out" });
+      });
 
     // 2) 세션 변경 구독
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
