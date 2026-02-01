@@ -1,0 +1,28 @@
+{
+  "cli": {
+    "version": ">= 16.31.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "apk": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://tfuwjuocfsptjxijeraq.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRmdXdqdW9jZnNwdGp4aWplcmFxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcyNzYzNjEsImV4cCI6MjA4Mjg1MjM2MX0.qFMObZNiTrSQUIhUcfP15JfDAjsyJRu7yu9MmIJYqRM",
+        "EXPO_PUBLIC_API_BASE": "https://inventory-manager-p5ya.vercel.app"
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
