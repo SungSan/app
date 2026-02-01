@@ -3,8 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Button, SafeAreaView, ScrollView, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAuthState } from "../lib/session";
-
-const BASE = (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/+$/, "");
+import { resolveApiBase } from "../lib/api";
 
 type InventoryRow = {
   item_id: string;
@@ -38,6 +37,7 @@ function uuidv4(): string {
 export default function Item() {
   const auth = useAuthState();
   const token = auth.status === "signed_in" ? auth.accessToken : null;
+  const apiBase = useMemo(() => resolveApiBase(), []);
 
   const p = useLocalSearchParams<{
     mode?: string;
@@ -70,7 +70,7 @@ export default function Item() {
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const canUse = useMemo(() => Boolean(BASE && token), [token]);
+  const canUse = useMemo(() => Boolean(apiBase.base && token), [apiBase.base, token]);
 
   useEffect(() => {
     if (auth.status === "signed_out") router.replace("/login");
@@ -84,8 +84,8 @@ export default function Item() {
   const hydrateFromBarcode = useCallback(
     async (bc: string) => {
       if (!token) return;
-      if (!BASE) {
-        Alert.alert("설정 오류", "EXPO_PUBLIC_API_BASE가 비어있습니다.");
+      if (!apiBase.base) {
+        Alert.alert("설정 오류", apiBase.error ?? "EXPO_PUBLIC_API_BASE가 비어있습니다.");
         return;
       }
       const v = bc.trim();
@@ -94,7 +94,7 @@ export default function Item() {
       setBarcode(v);
 
       try {
-        const url = new URL(`${BASE}/api/mobile/inventory`);
+        const url = new URL(`${apiBase.base}/api/mobile/inventory`);
         url.searchParams.set("q", v);
 
         const res = await fetch(url.toString(), { method: "GET", headers: authHeaders(token) });
@@ -120,7 +120,7 @@ export default function Item() {
         // 조용히 무시
       }
     },
-    [token]
+    [token, apiBase.base, apiBase.error]
   );
 
   // ✅ scan 화면에서 돌아온 값 적용
@@ -155,8 +155,8 @@ export default function Item() {
 
   const submit = async () => {
     if (!token) return;
-    if (!BASE) {
-      Alert.alert("설정 오류", "EXPO_PUBLIC_API_BASE가 비어있습니다.");
+    if (!apiBase.base) {
+      Alert.alert("설정 오류", apiBase.error ?? "EXPO_PUBLIC_API_BASE가 비어있습니다.");
       return;
     }
 
@@ -172,7 +172,7 @@ export default function Item() {
     try {
       const effectiveDirection = mode === "quick-in" ? "IN" : direction;
 
-      const res = await fetch(`${BASE}/api/mobile/movements`, {
+      const res = await fetch(`${apiBase.base}/api/mobile/movements`, {
         method: "POST",
         headers: authHeaders(token),
         body: JSON.stringify({

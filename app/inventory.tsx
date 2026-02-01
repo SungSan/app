@@ -14,8 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAuthState } from "../lib/session";
-
-const BASE = (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/+$/, "");
+import { resolveApiBase } from "../lib/api";
 
 type InventoryRow = {
   item_id: string;
@@ -41,6 +40,7 @@ function isHtmlLike(text: string) {
 export default function Inventory() {
   const auth = useAuthState();
   const token = auth.status === "signed_in" ? auth.accessToken : null;
+  const apiBase = useMemo(() => resolveApiBase(), []);
 
   const params = useLocalSearchParams<{ q?: string }>();
 
@@ -51,12 +51,12 @@ export default function Inventory() {
   const [rows, setRows] = useState<InventoryRow[]>([]);
 
   const lastAutoQRef = useRef<string>("__init__");
-  const canUse = useMemo(() => Boolean(BASE && token), [token]);
+  const canUse = useMemo(() => Boolean(apiBase.base && token), [apiBase.base, token]);
 
   const search = useCallback(
     async (query?: string) => {
-      if (!BASE) {
-        Alert.alert("설정 오류", "EXPO_PUBLIC_API_BASE 확인(.env / EAS env)");
+      if (!apiBase.base) {
+        Alert.alert("설정 오류", apiBase.error ?? "EXPO_PUBLIC_API_BASE 확인(.env / EAS env)");
         return;
       }
       if (!token) {
@@ -66,7 +66,7 @@ export default function Inventory() {
       }
 
       const keyword = (query ?? q).trim();
-      const url = new URL(`${BASE}/api/mobile/inventory`);
+      const url = new URL(`${apiBase.base}/api/mobile/inventory`);
       if (keyword) url.searchParams.set("q", keyword);
 
       // 서버가 필터를 지원하면 사용, 아니면 무시되어도 무방
@@ -98,7 +98,7 @@ export default function Inventory() {
         setLoading(false);
       }
     },
-    [q, token, categoryFilter, optionQ]
+    [q, token, categoryFilter, optionQ, apiBase.base, apiBase.error]
   );
 
   useEffect(() => {

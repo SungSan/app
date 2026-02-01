@@ -11,7 +11,7 @@ function getExtra(): Extra {
   return { ...manifest2Extra, ...expoConfigExtra };
 }
 
-function getApiBase(): string {
+export function getConfiguredApiBase(): string {
   const extra = getExtra();
 
   const fromExtra =
@@ -24,18 +24,21 @@ function getApiBase(): string {
   return base;
 }
 
-function normalizeBaseUrl(base: string): string {
-  const b = base.trim().replace(/\/+$/, ""); // trailing slash 제거
-  if (!b) throw new Error("EXPO_PUBLIC_API_BASE가 비어있습니다. (eas.json env 확인)");
+export function resolveApiBase(): { base: string | null; error?: string } {
+  const b = getConfiguredApiBase().trim().replace(/\/+$/, ""); // trailing slash 제거
+  if (!b) {
+    return { base: null, error: "EXPO_PUBLIC_API_BASE가 비어있습니다. (eas.json env 확인)" };
+  }
   if (!/^https:\/\//i.test(b)) {
     // Android에서 http는 기본적으로 막혀서 Network request failed가 나기 쉬움
-    throw new Error(`API_BASE는 https:// 여야 합니다. 현재: ${b}`);
+    return { base: null, error: `API_BASE는 https:// 여야 합니다. 현재: ${b}` };
   }
-  return b;
+  return { base: b };
 }
 
 export async function apiGet(path: string, token?: string | null): Promise<string> {
-  const base = normalizeBaseUrl(getApiBase());
+  const { base, error } = resolveApiBase();
+  if (!base) throw new Error(error ?? "API_BASE 설정 오류");
   const url = `${base}${path.startsWith("/") ? "" : "/"}${path}`;
 
   try {
