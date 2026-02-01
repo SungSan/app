@@ -3,8 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Alert, Button, SafeAreaView, ScrollView, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAuthState } from "../lib/session";
-
-const BASE = (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/+$/, "");
+import { resolveApiBase } from "../lib/api";
 
 function authHeaders(token: string) {
   return { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" };
@@ -21,6 +20,7 @@ function uuidv4(): string {
 export default function Transfer() {
   const auth = useAuthState();
   const token = auth.status === "signed_in" ? auth.accessToken : null;
+  const apiBase = useMemo(() => resolveApiBase(), []);
 
   const p = useLocalSearchParams<{
     item_id?: string;
@@ -69,8 +69,8 @@ export default function Transfer() {
 
   const submit = async () => {
     if (!token) return;
-    if (!BASE) {
-      Alert.alert("설정 오류", "EXPO_PUBLIC_API_BASE가 비어있습니다.");
+    if (!apiBase.base) {
+      Alert.alert("설정 오류", apiBase.error ?? "EXPO_PUBLIC_API_BASE가 비어있습니다.");
       return;
     }
 
@@ -86,7 +86,7 @@ export default function Transfer() {
 
     setSaving(true);
     try {
-      const res = await fetch(`${BASE}/api/mobile/transfer`, {
+      const res = await fetch(`${apiBase.base}/api/mobile/transfer`, {
         method: "POST",
         headers: authHeaders(token),
         body: JSON.stringify({
