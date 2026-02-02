@@ -1,181 +1,341 @@
 // app/transfer.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import { Alert, Button, SafeAreaView, ScrollView, Text, TextInput, View } from "react-native";
+import {
+  Alert,
+  Button,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+  ActivityIndicator,
+  ScrollView,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import { useAuthState } from "../lib/session";
+import { useAccessToken } from "../lib/session";
+import { apiGet } from "../lib/api";
+import { supabase } from "../lib/supabase";
 
-const BASE = (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/+$/, "");
+const BASE = process.env.EXPO_PUBLIC_API_BASE;
 
-function authHeaders(token: string) {
-  return { Authorization: `Bearer ${token}`, Accept: "application/json", "Content-Type": "application/json" };
-}
-function isHtmlLike(text: string) {
-  const t = (text || "").trim();
-  return t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<");
-}
-function uuidv4(): string {
-  const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
-  return `${s4()}${s4()}-${s4()}-${s4()}-${s4()}-${s4()}${s4()}${s4()}`;
-}
+type InvRow = { location: string };
 
 export default function Transfer() {
-  const auth = useAuthState();
-  const token = auth.status === "signed_in" ? auth.accessToken : null;
+  const token = useAccessToken();
+  const params = useLocalSearchParams();
 
-  const p = useLocalSearchParams<{
-    item_id?: string;
-    artist?: string;
-    category?: string;
-    album_version?: string;
-    option?: string;
-    from_location?: string;
-    barcode?: string;
+  const itemId = String(params.item_id ?? "");
+  const fromDefault = String(params.from_location ?? "");
 
-    scanTarget?: string;
-    scanned?: string;
-  }>();
+  const [fromLoc, setFromLoc] = useState(fromDefault);
+  const [toLoc, setToLoc] = useState(String(params.to_location ?? ""));
+  const [quantity, setQuantity] = useState(Number(params.quantity ?? 1));
+  const [memo, setMemo] = useState(String(params.memo ?? ""));
 
-  const [fromLocation, setFromLocation] = useState(String(p.from_location ?? ""));
-  const [toLocation, setToLocation] = useState("");
-  const [quantity, setQuantity] = useState("1");
-  const [memo, setMemo] = useState("");
-  const [saving, setSaving] = useState(false);
+  // item 메타 (전산이관 API가 요구하는 필드)
+  const [meta, setMeta] = useState<{
+    artist: string;
+    category: string;
+    album_version: string;
+    option?: string | null;
+  } | null>(null);
+  const [metaLoading, setMetaLoading] = useState(false);
 
-  const info = useMemo(() => {
-    return {
-      item_id: String(p.item_id ?? ""),
-      artist: String(p.artist ?? ""),
-      category: String(p.category ?? ""),
-      album_version: String(p.album_version ?? ""),
-      option: String(p.option ?? ""),
-      barcode: String(p.barcode ?? ""),
+  const [invLoading, setInvLoading] = useState(false);
+  const [locations, setLocations] = useState<string[]>([]);
+
+  const title = useMemo(() => "전산 이관", []);
+
+  // ✅ item_id로 items 테이블에서 필수 메타를 로드 (missing fields 방지)
+  useEffect(() => {
+    let alive = true;
+
+    async function loadMeta() {
+      if (!itemId) {
+        setMeta(null);
+        return;
+      }
+      setMetaLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("items")
+          .select("artist, category, album_version, option")
+          .eq("id", itemId)
+          .maybeSingle();
+
+        if (!alive) return;
+
+        if (error) {
+          console.warn("[transfer] loadMeta error:", error);
+          setMeta(null);
+          return;
+        }
+
+        if (data) {
+          setMeta({
+            artist: String((data as any).artist ?? ""),
+            category: String((data as any).category ?? ""),
+            album_version: String((data as any).album_version ?? ""),
+            option: ((data as any).option ?? null) as any,
+          });
+        } else {
+          setMeta(null);
+        }
+      } finally {
+        if (alive) setMetaLoading(false);
+      }
+    }
+
+    loadMeta();
+    return () => {
+      alive = false;
     };
-  }, [p]);
+  }, [itemId]);
 
+  // (기존 동작 유지) 재고 조회로 로케이션 후보 리스트 구성
   useEffect(() => {
-    if (auth.status === "signed_out") router.replace("/login");
-  }, [auth.status]);
+    let alive = true;
 
-  // 로케이션 스캔 결과 반영(to_location용)
-  useEffect(() => {
-    const scanTarget = String(p.scanTarget ?? "");
-    const scanned = String(p.scanned ?? "").trim();
-    if (scanTarget === "to_location" && scanned) setToLocation(scanned);
-  }, [p.scanTarget, p.scanned]);
+    async function loadInventory() {
+      setInvLoading(true);
+      try {
+        const data = await apiGet(`/api/mobile/inventory`, token ?? "");
+        if (!alive) return;
 
-  const goScanToLocation = () => {
-    router.push({ pathname: "/scan", params: { returnTo: "transfer", target: "to_location" } });
-  };
+        const inv: InvRow[] = Array.isArray(data?.rows) ? data.rows : [];
+        const uniq = Array.from(
+          new Set(inv.map((r) => String(r.location ?? "")).filter(Boolean))
+        ).sort();
 
-  const submit = async () => {
-    if (!token) return;
-    if (!BASE) {
-      Alert.alert("설정 오류", "EXPO_PUBLIC_API_BASE가 비어있습니다.");
+        setLocations(uniq);
+      } catch (e) {
+        console.warn("[transfer] loadInventory error:", e);
+      } finally {
+        if (alive) setInvLoading(false);
+      }
+    }
+
+    if (token) loadInventory();
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
+  function openScan(target: "location") {
+    router.push({
+      pathname: "/scan",
+      params: {
+        target,
+        returnTo: "transfer",
+        // passthrough (초기화 금지)
+        item_id: itemId,
+        from_location: fromLoc,
+        to_location: toLoc,
+        quantity: String(quantity),
+        memo,
+      },
+    });
+  }
+
+  async function onSubmit() {
+    if (!token) {
+      Alert.alert("토큰이 없습니다", "다시 로그인해 주세요.");
+      router.replace("/login");
+      return;
+    }
+    if (!itemId) {
+      Alert.alert("이관 실패", "item_id가 없습니다. 재고 상세에서 다시 진입하세요.");
+      return;
+    }
+    if (!fromLoc.trim() || !toLoc.trim()) {
+      Alert.alert("입력 필요", "보내는곳(from) / 받는곳(to)을 입력해 주세요.");
+      return;
+    }
+    const q = Number(quantity);
+    if (!Number.isFinite(q) || q <= 0) {
+      Alert.alert("수량 오류", "수량은 1 이상이어야 합니다.");
       return;
     }
 
-    const n = Number(quantity);
-    if (!Number.isFinite(n) || n <= 0) {
-      Alert.alert("입력 오류", "수량은 1 이상의 숫자여야 합니다.");
+    // meta가 아직 로드 중이면 잠시 막음(필드 누락 방지)
+    if (metaLoading) {
+      Alert.alert("잠시만요", "품목 정보를 불러오는 중입니다.");
       return;
     }
-    if (!fromLocation.trim() || !toLocation.trim()) {
-      Alert.alert("입력 오류", "보내는곳/받는곳 로케이션을 입력하세요.");
+    if (!meta?.artist || !meta?.category || !meta?.album_version) {
+      Alert.alert(
+        "이관 실패",
+        "품목 메타정보를 불러오지 못했습니다. 재고 상세에서 다시 진입 후 시도해 주세요."
+      );
       return;
     }
 
-    setSaving(true);
+    // ✅ 핵심: 웹 세션/쿠키가 아닌 Bearer 토큰 기반 “모바일 API”로 전송
+    const payload = {
+      item_id: itemId,
+      from_location: fromLoc.trim(),
+      to_location: toLoc.trim(),
+      quantity: q,
+      memo: memo.trim() || null,
+
+      // 서버 검증용(누락 시 400 missing fields 나오던 부분)
+      artist: meta.artist,
+      category: meta.category,
+      album_version: meta.album_version,
+      option: meta.option ?? null,
+
+      idempotencyKey: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    };
+
     try {
       const res = await fetch(`${BASE}/api/mobile/transfer`, {
         method: "POST",
-        headers: authHeaders(token),
-        body: JSON.stringify({
-          artist: info.artist,
-          category: info.category,
-          album_version: info.album_version,
-          option: info.option || null,
-          from_location: fromLocation.trim(),
-          to_location: toLocation.trim(),
-          quantity: n,
-          barcode: info.barcode || null,
-          memo: memo || null,
-          idempotencyKey: uuidv4(),
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
       });
 
-      const text = await res.text().catch(() => "");
-      if (isHtmlLike(text)) {
-        Alert.alert("이관 실패", "HTML 응답(인증/라우팅/BASE 문제)입니다.");
-        return;
+      const text = await res.text();
+      let json: any = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        // ignore
       }
+
       if (!res.ok) {
-        Alert.alert("이관 실패", `${res.status}\n\n${text.slice(0, 300)}`);
+        const msg =
+          json?.error
+            ? String(json.error)
+            : text
+            ? String(text).slice(0, 200)
+            : `HTTP ${res.status}`;
+        Alert.alert("이관 실패", `${res.status}\n${msg}`);
         return;
       }
 
+      Alert.alert("완료", "이관 등록되었습니다.");
       router.replace("/inventory");
-    } catch (e: any) {
-      Alert.alert("이관 실패", e?.message ?? String(e));
-    } finally {
-      setSaving(false);
+    } catch (err: any) {
+      Alert.alert("이관 실패", err?.message ?? String(err));
     }
-  };
-
-  if (auth.status === "loading") {
-    return (
-      <SafeAreaView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Text>로딩중…</Text>
-      </SafeAreaView>
-    );
   }
-  if (!token) return null;
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ padding: 12, gap: 10 }}>
-        <Text style={{ fontSize: 18, fontWeight: "700" }}>전산 이관</Text>
+    <SafeAreaView edges={["top"]} style={{ flex: 1, backgroundColor: "#fff" }}>
+      <ScrollView contentContainerStyle={{ padding: 16 }}>
+        <Text style={{ fontSize: 18, fontWeight: "700", color: "#000", marginBottom: 12 }}>
+          {title}
+        </Text>
 
-        <View style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12, gap: 6 }}>
-          <Text style={{ fontWeight: "700" }}>
-            {info.artist} / {info.album_version}
-          </Text>
-          <Text>
-            {info.category}
-            {info.option ? ` / ${info.option}` : ""}
-          </Text>
-          {!!info.barcode && <Text style={{ color: "#666" }}>barcode: {info.barcode}</Text>}
-        </View>
+        <Text style={{ fontWeight: "700", color: "#000", marginBottom: 6 }}>전산 이관</Text>
 
-        <Text>보내는곳(from)</Text>
-        <TextInput value={fromLocation} onChangeText={setFromLocation} style={inputStyle} autoCapitalize="none" />
+        <Text style={{ color: "#000", marginBottom: 6 }}>보내는곳(from)</Text>
+        <TextInput
+          value={fromLoc}
+          onChangeText={setFromLoc}
+          placeholder="from"
+          placeholderTextColor="#666"
+          autoCapitalize="none"
+          style={{
+            borderWidth: 1,
+            borderColor: "#ccc",
+            borderRadius: 10,
+            padding: 12,
+            color: "#000",
+            marginBottom: 10,
+          }}
+        />
 
-        <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
+        <Text style={{ color: "#000", marginBottom: 6 }}>받는곳(to)</Text>
+        <View style={{ flexDirection: "row", gap: 10, marginBottom: 10 }}>
           <View style={{ flex: 1 }}>
-            <Text>받는곳(to)</Text>
-            <TextInput value={toLocation} onChangeText={setToLocation} style={inputStyle} autoCapitalize="none" />
+            <TextInput
+              value={toLoc}
+              onChangeText={setToLoc}
+              placeholder="to"
+              placeholderTextColor="#666"
+              autoCapitalize="none"
+              style={{
+                borderWidth: 1,
+                borderColor: "#ccc",
+                borderRadius: 10,
+                padding: 12,
+                color: "#000",
+              }}
+            />
           </View>
-          <View style={{ width: 120, marginTop: 18 }}>
-            <Button title="로케이션 스캔" onPress={goScanToLocation} />
-          </View>
+          <Pressable
+            onPress={() => openScan("location")}
+            style={{
+              backgroundColor: "#0B4A6F",
+              paddingHorizontal: 14,
+              borderRadius: 10,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text style={{ color: "#fff", fontWeight: "700" }}>로케이션 스캔</Text>
+          </Pressable>
         </View>
 
-        <Text>수량</Text>
-        <TextInput value={quantity} onChangeText={setQuantity} keyboardType="numeric" style={inputStyle} />
+        <Text style={{ color: "#000", marginBottom: 6 }}>수량</Text>
+        <TextInput
+          value={String(quantity)}
+          onChangeText={(v) => setQuantity(Number(v))}
+          placeholder="수량"
+          placeholderTextColor="#666"
+          keyboardType="numeric"
+          style={{
+            borderWidth: 1,
+            borderColor: "#ccc",
+            borderRadius: 10,
+            padding: 12,
+            color: "#000",
+            marginBottom: 10,
+          }}
+        />
 
-        <Text>메모</Text>
-        <TextInput value={memo} onChangeText={setMemo} style={inputStyle} />
+        <Text style={{ color: "#000", marginBottom: 6 }}>메모</Text>
+        <TextInput
+          value={memo}
+          onChangeText={setMemo}
+          placeholder="memo"
+          placeholderTextColor="#666"
+          style={{
+            borderWidth: 1,
+            borderColor: "#ccc",
+            borderRadius: 10,
+            padding: 12,
+            color: "#000",
+            marginBottom: 14,
+          }}
+        />
 
-        <Button title={saving ? "처리중..." : "이관 등록"} onPress={submit} disabled={saving} />
+        {(metaLoading || invLoading) && (
+          <View style={{ paddingVertical: 10 }}>
+            <ActivityIndicator />
+          </View>
+        )}
+
+        {/* ✅ 버튼은 파란색 유지 */}
+        <Pressable
+          onPress={onSubmit}
+          style={{
+            backgroundColor: "#0B4A6F",
+            paddingVertical: 14,
+            borderRadius: 10,
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "#fff", fontWeight: "800" }}>이관 등록</Text>
+        </Pressable>
+
+        <View style={{ height: 10 }} />
         <Button title="재고조회로" onPress={() => router.replace("/inventory")} />
       </ScrollView>
     </SafeAreaView>
   );
 }
-
-const inputStyle = {
-  borderWidth: 1,
-  borderColor: "#ccc",
-  paddingHorizontal: 10,
-  paddingVertical: 8,
-  borderRadius: 8,
-} as const;

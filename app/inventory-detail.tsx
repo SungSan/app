@@ -36,14 +36,13 @@ export default function InventoryDetail() {
     return true;
   };
 
-  const goMovement = (direction: "IN" | "OUT") => {
+  const pushItem = (args: { mode: string; direction: "IN" | "OUT" }) => {
     if (!ensure()) return;
     router.push({
       pathname: "/item",
       params: {
-        mode: "movement",
-        direction,
-        // 자동 채움
+        mode: args.mode,
+        direction: args.direction,
         item_id: item.item_id,
         artist: item.artist,
         category: item.category,
@@ -55,50 +54,44 @@ export default function InventoryDetail() {
     });
   };
 
+  const goQuickIn = () => pushItem({ mode: "quick-in", direction: "IN" });
+  const goIn = () => pushItem({ mode: "movement", direction: "IN" });
+  const goOut = () => pushItem({ mode: "movement", direction: "OUT" });
+
   const goTransfer = () => {
     if (!ensure()) return;
     router.push({
       pathname: "/transfer",
       params: {
-        item_id: item.item_id,
-        artist: item.artist,
-        category: item.category,
-        album_version: item.album_version,
-        option: item.option,
+        item_id: item.item_id,        // ✅ 이관에 item_id 전달 (필수)
         from_location: item.location,
-        barcode: item.barcode,
       },
     });
   };
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ padding: 12, gap: 10 }}>
-        <Text style={{ fontSize: 18, fontWeight: "700" }}>재고 상세</Text>
+    <SafeAreaView style={{ flex: 1, backgroundColor: "#fff" }}>
+      <ScrollView contentContainerStyle={{ padding: 12, gap: 12 }}>
+        <Text style={{ fontSize: 18, fontWeight: "700", color: "#000" }}>재고 상세</Text>
 
-        <View style={{ borderWidth: 1, borderColor: "#ddd", borderRadius: 12, padding: 12, gap: 6 }}>
-          <Text style={{ fontWeight: "700" }}>
+        <View style={{ padding: 12, borderWidth: 1, borderColor: "#ddd", borderRadius: 12, backgroundColor: "#fff" }}>
+          <Text style={{ fontWeight: "700", color: "#000" }}>
             {item.artist} / {item.album_version}
           </Text>
-          <Text>
+          <Text style={{ color: "#000" }}>
             {item.category}
             {item.option ? ` / ${item.option}` : ""}
           </Text>
-          <Text>로케이션: {item.location}</Text>
-          <Text>수량: {item.quantity}</Text>
-          {!!item.barcode && <Text style={{ color: "#666" }}>barcode: {item.barcode}</Text>}
+          <Text style={{ color: "#000" }}>로케이션: {item.location}</Text>
+          <Text style={{ color: "#000" }}>수량: {item.quantity}</Text>
         </View>
 
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <View style={{ flex: 1 }}>
-            <Button title="입고" onPress={() => goMovement("IN")} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Button title="출고" onPress={() => goMovement("OUT")} />
-          </View>
-        </View>
-
+        {/* ✅ 원복: 빠른입고 / 일반입고 / 출고 / 전산이관 */}
+        <Button title="빠른입고" onPress={goQuickIn} />
+        <Button title="일반입고" onPress={goIn} />
+        <Button title="출고" onPress={goOut} />
         <Button title="전산 이관" onPress={goTransfer} />
+
         <Button title="재고조회로" onPress={() => router.replace("/inventory")} />
       </ScrollView>
     </SafeAreaView>

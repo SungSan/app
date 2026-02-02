@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useLocalSearchParams } from "expo-router";
-import { useAuthState } from "../lib/session";
+import { useAccessToken } from "../lib/session"; // ✅ 변경: useAuthState -> useAccessToken
 
 const BASE = (process.env.EXPO_PUBLIC_API_BASE || "").replace(/\/+$/, "");
 
@@ -34,13 +34,13 @@ function authHeaders(token: string) {
   return { Authorization: `Bearer ${token}`, Accept: "application/json" };
 }
 function isHtmlLike(text: string) {
-  const t = (text || "").trim();
+  const t = (text || "").trim().toLowerCase();
   return t.startsWith("<!doctype") || t.startsWith("<html") || t.startsWith("<");
 }
 
 export default function Inventory() {
-  const auth = useAuthState();
-  const token = auth.status === "signed_in" ? auth.accessToken : null;
+  // ✅ 변경: 토큰 소스만 교체 (로딩/로그아웃/정상 구분)
+  const token = useAccessToken(); // undefined(로딩중) | null(로그아웃) | string(정상)
 
   const params = useLocalSearchParams<{ q?: string }>();
 
@@ -59,6 +59,13 @@ export default function Inventory() {
         Alert.alert("설정 오류", "EXPO_PUBLIC_API_BASE 확인(.env / EAS env)");
         return;
       }
+
+      // ✅ 로딩중이면 “토큰 없음”으로 오판하지 않음
+      if (token === undefined) {
+        Alert.alert("확인 중", "로그인 상태를 확인 중입니다. 잠시 후 다시 시도해 주세요.");
+        return;
+      }
+
       if (!token) {
         Alert.alert("로그인 필요", "토큰이 없습니다. 다시 로그인하세요.");
         router.replace("/login");
@@ -101,13 +108,14 @@ export default function Inventory() {
     [q, token, categoryFilter, optionQ]
   );
 
+  // ✅ 변경: 로그아웃(null)일 때만 로그인으로
   useEffect(() => {
-    if (auth.status === "signed_out") router.replace("/login");
-  }, [auth.status]);
+    if (token === null) router.replace("/login");
+  }, [token]);
 
   // ✅ 메인에서 스캔 -> params.q로 돌아오면 자동조회
   useEffect(() => {
-    if (!token) return;
+    if (token === undefined || token === null) return;
 
     const incomingQ = String(params.q ?? "").trim();
 
@@ -158,6 +166,18 @@ export default function Inventory() {
     });
   };
 
+  // ✅ 초기화 버튼 (검색/필터를 초기 상태로 복귀)
+  const onReset = () => {
+    setQ("");
+    setOptionQ("");
+    setCategoryFilter("all");
+    lastAutoQRef.current = "";
+    setRows([]);
+    router.replace({ pathname: "/inventory" });
+    // token이 string일 때만 검색 실행
+    if (typeof token === "string") search("");
+  };
+
   const renderRow = ({ item }: { item: InventoryRow }) => (
     <Pressable
       onPress={() => openDetail(item)}
@@ -170,34 +190,39 @@ export default function Inventory() {
         backgroundColor: "#fff",
       }}
     >
-      <Text style={{ fontWeight: "700", fontSize: 15 }}>
+      <Text style={{ fontWeight: "700", fontSize: 15, color: "#000" }}>
         {item.artist} / {item.album_version}
       </Text>
-      <Text style={{ marginTop: 4, color: "#333" }}>
+      <Text style={{ marginTop: 4, color: "#000" }}>
         {item.category}
         {item.option ? ` / ${item.option}` : ""}
       </Text>
-      <Text style={{ marginTop: 4, color: "#333" }}>
+      <Text style={{ marginTop: 4, color: "#000" }}>
         {item.location} / 수량 {item.quantity}
       </Text>
-      {!!item.barcode && <Text style={{ marginTop: 4, color: "#666" }}>barcode: {item.barcode}</Text>}
-      <Text style={{ marginTop: 6, color: "#666" }}>눌러서 상세/입출고/이관</Text>
+      {!!item.barcode && <Text style={{ marginTop: 4, color: "#000" }}>barcode: {item.barcode}</Text>}
+      <Text style={{ marginTop: 6, color: "#000" }}>눌러서 상세/입출고/이관</Text>
     </Pressable>
   );
 
-  if (auth.status === "loading") {
+  // ✅ 로딩중(토큰 확인중)
+  if (token === undefined) {
     return (
-      <SafeAreaView style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <Text>로딩중…</Text>
+      <SafeAreaView style={{ flex: 1, backgroundColor: "#fff", justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator />
+        <Text style={{ marginTop: 10, color: "#000" }}>로딩중...</Text>
       </SafeAreaView>
     );
   }
-  if (!token) return null;
+
+  // ✅ 로그아웃 상태는 위 effect에서 /login으로 보내므로 화면은 렌더하지 않음
+  if (token === null) return null;
 
   return (
     <>
       <StatusBar barStyle="dark-content" />
       <SafeAreaView edges={["top"]} style={{ flex: 1, padding: 12, backgroundColor: "#fff" }}>
+        {/* ✅ 메인에 고정: 빠른입고/일반입고 */}
         <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
           <View style={{ flex: 1 }}>
             <Button
@@ -235,10 +260,18 @@ export default function Inventory() {
               placeholder="바코드 / 아티스트 / 앨범명 검색"
               placeholderTextColor="#666"
               autoCapitalize="none"
-              style={{ borderWidth: 1, padding: 10, borderRadius: 10, color: "#000", borderColor: "#ccc" }}
+              style={{
+                borderWidth: 1,
+                padding: 10,
+                borderRadius: 10,
+                color: "#000",
+                borderColor: "#ccc",
+                backgroundColor: "#fff",
+              }}
             />
           </View>
           <Button title="스캔" onPress={() => router.push({ pathname: "/scan", params: { target: "q" } })} />
+          <Button title="초기화" onPress={onReset} />
         </View>
 
         <View style={{ marginBottom: 8 }}>
@@ -248,24 +281,48 @@ export default function Inventory() {
             placeholder="옵션 검색 (예: A-1)"
             placeholderTextColor="#666"
             autoCapitalize="none"
-            style={{ borderWidth: 1, padding: 10, borderRadius: 10, color: "#000", borderColor: "#ccc" }}
+            style={{
+              borderWidth: 1,
+              padding: 10,
+              borderRadius: 10,
+              color: "#000",
+              borderColor: "#ccc",
+              backgroundColor: "#fff",
+            }}
           />
         </View>
 
-        <Button title={loading ? "조회중..." : "조회"} onPress={() => search(q)} disabled={!canUse || loading} />
+        {/* ✅ 조회 버튼: 파란색 통일 (RN Button 회색 문제 제거) */}
+        <Pressable
+          onPress={() => search(q)}
+          disabled={!canUse || loading}
+          style={({ pressed }) => [
+            {
+              height: 44,
+              borderRadius: 8,
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: !canUse || loading ? "#cfd8dc" : "#1a73e8",
+              opacity: pressed ? 0.85 : 1,
+              marginBottom: 0,
+            },
+          ]}
+        >
+          <Text style={{ color: "#fff", fontWeight: "700" }}>{loading ? "조회중..." : "조회"}</Text>
+        </Pressable>
 
         <View style={{ flex: 1, marginTop: 12 }}>
           {loading ? (
             <View style={{ paddingTop: 20, alignItems: "center" }}>
               <ActivityIndicator />
-              <Text style={{ marginTop: 8, color: "#666" }}>불러오는 중…</Text>
+              <Text style={{ marginTop: 8, color: "#000" }}>불러오는 중…</Text>
             </View>
           ) : (
             <FlatList
               data={filteredRows}
               keyExtractor={(item, idx) => `${item.item_id}-${item.location}-${idx}`}
               renderItem={renderRow}
-              ListEmptyComponent={<Text style={{ color: "#666" }}>조회 결과가 없습니다.</Text>}
+              ListEmptyComponent={<Text style={{ color: "#000" }}>조회 결과가 없습니다.</Text>}
             />
           )}
         </View>
