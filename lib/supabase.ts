@@ -14,8 +14,9 @@ type Extra = {
 
 function getExtra(): Extra {
   const expoConfigExtra = (Constants.expoConfig?.extra ?? {}) as Extra;
+  const manifestExtra = ((Constants as any).manifest?.extra ?? {}) as Extra;
   const manifest2Extra = ((Constants as any).manifest2?.extra ?? {}) as Extra;
-  return { ...manifest2Extra, ...expoConfigExtra };
+  return { ...manifestExtra, ...manifest2Extra, ...expoConfigExtra };
 }
 
 function pickEnv(name: keyof Extra, fallbackProcessEnvKey?: string): string {
