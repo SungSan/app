@@ -1,6 +1,6 @@
 // app/item.tsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Alert, Button, SafeAreaView, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, Button, Modal, Pressable, SafeAreaView, ScrollView, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useAuthState } from "../lib/session";
 import { resolveApiBase } from "../lib/api";
@@ -69,6 +69,8 @@ export default function Item() {
   const [quantity, setQuantity] = useState("1");
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
+  const [selectRows, setSelectRows] = useState<InventoryRow[]>([]);
+  const [selectVisible, setSelectVisible] = useState(false);
 
   const canUse = useMemo(() => Boolean(apiBase.base && token), [apiBase.base, token]);
 
@@ -80,6 +82,14 @@ export default function Item() {
     if (mode === "quick-in") return "빠른입고";
     return direction === "IN" ? "일반입고" : "출고";
   }, [mode, direction]);
+
+  const applyInventoryRow = useCallback((r: InventoryRow) => {
+    setArtist(r.artist ?? "");
+    setCategory(r.category ?? "");
+    setAlbumVersion(r.album_version ?? "");
+    setOption((r.option ?? "") as string);
+    setLocation(r.location ?? "");
+  }, []);
 
   const hydrateFromBarcode = useCallback(
     async (bc: string) => {
@@ -109,18 +119,18 @@ export default function Item() {
         const data = JSON.parse(text) as InventoryRow[];
         if (!Array.isArray(data) || data.length === 0) return;
 
-        const r = data[0];
-        setArtist(r.artist ?? "");
-        setCategory(r.category ?? "");
-        setAlbumVersion(r.album_version ?? "");
-        setOption((r.option ?? "") as string);
-        // 로케이션도 자동 입력(원치 않으면 이 줄만 제거)
-        setLocation(r.location ?? "");
+        if (data.length === 1) {
+          applyInventoryRow(data[0]);
+          return;
+        }
+
+        setSelectRows(data);
+        setSelectVisible(true);
       } catch {
         // 조용히 무시
       }
     },
-    [token, apiBase.base, apiBase.error]
+    [token, apiBase.base, apiBase.error, applyInventoryRow]
   );
 
   // ✅ scan 화면에서 돌아온 값 적용
@@ -255,6 +265,44 @@ export default function Item() {
 
         <Button title={saving ? "처리중..." : "등록"} onPress={submit} disabled={!canUse || saving} />
       </ScrollView>
+
+      <Modal visible={selectVisible} transparent animationType="fade" onRequestClose={() => setSelectVisible(false)}>
+        <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.4)", justifyContent: "center", padding: 20 }}>
+          <View style={{ backgroundColor: "#fff", borderRadius: 12, padding: 12, maxHeight: "80%" }}>
+            <Text style={{ fontSize: 16, fontWeight: "700", marginBottom: 8 }}>상품 선택</Text>
+            <ScrollView>
+              {selectRows.map((row, idx) => (
+                <Pressable
+                  key={`${row.item_id}-${row.location}-${idx}`}
+                  onPress={() => {
+                    applyInventoryRow(row);
+                    setSelectVisible(false);
+                  }}
+                  style={{
+                    borderWidth: 1,
+                    borderColor: "#ddd",
+                    borderRadius: 10,
+                    padding: 10,
+                    marginBottom: 8,
+                  }}
+                >
+                  <Text style={{ fontWeight: "700" }}>
+                    {row.artist} / {row.album_version}
+                  </Text>
+                  <Text style={{ color: "#333" }}>
+                    {row.category}
+                    {row.option ? ` / ${row.option}` : ""}
+                  </Text>
+                  <Text style={{ color: "#666" }}>
+                    {row.location} / 수량 {row.quantity}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Button title="닫기" onPress={() => setSelectVisible(false)} />
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
